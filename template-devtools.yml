@@ -1,0 +1,200 @@
+AWSTemplateFormatVersion: '2010-09-09'
+Description: AWS CloudFormation that provisions an AWS CodeCommit repository and CodePipeline for the Lambda function
+
+Parameters:
+  FunctionName:
+    Type: String
+    Description: The name for the function
+  PipelineArtifactStoreS3Location:
+    Type: String
+    Description: Suffix of the S3 bucket to store CodePipeline artifacts
+    Default: codepipeline-artifacts
+  BuildArtifactsStoreS3Location:
+    Type: String
+    Description: Suffix of the S3 bucket to store CodeBuild artifacts
+    Default: codebuild-artifacts
+
+Resources:
+  CodeCommitRepository:
+    Type: AWS::CodeCommit::Repository
+    Properties:
+      RepositoryDescription: Lambda function to say Hello World
+      RepositoryName: !Sub ${FunctionName}-lambda
+
+  CodePipeline:
+    Type: AWS::CodePipeline::Pipeline
+    Properties:
+      Name: !Sub ${FunctionName}-lambda-pipeline
+      RoleArn: !GetAtt CodePipelineRole.Arn
+      ArtifactStore:
+        Type: S3
+        Location: !Sub ${AWS::AccountId}-${PipelineArtifactStoreS3Location}
+      Stages:
+        -
+          Name: Source
+          Actions:
+            -
+              Name: SourceAction
+              ActionTypeId:
+                Category: Source
+                Owner: AWS
+                Version: 1
+                Provider: CodeCommit
+              OutputArtifacts:
+                -
+                  Name: MyApp
+              Configuration:
+                BranchName: master
+                RepositoryName: !GetAtt CodeCommitRepository.Name
+              RunOrder: 1
+        -
+          Name: Build
+          Actions:
+            -
+              Name: CodeBuild
+              ActionTypeId:
+                Category: Build
+                Owner: AWS
+                Version: 1
+                Provider: CodeBuild
+              InputArtifacts:
+                -
+                  Name: MyApp
+              Configuration:
+                ProjectName:
+                  Ref: CodeBuild
+              RunOrder: 1
+
+  CodeBuild:
+    Type: AWS::CodeBuild::Project
+    Properties:
+      Name: !Sub ${FunctionName}-lambda-build
+      Description: Builds the AWS Lambda function
+      ServiceRole: !GetAtt CodeBuildRole.Arn
+      Artifacts:
+        Type: CODEPIPELINE
+        Name: !Sub ${FunctionName}-lambda-build
+      Environment:
+        Type: LINUX_CONTAINER
+        ComputeType: BUILD_GENERAL1_SMALL
+        Image: aws/codebuild/dot-net:core-2.1
+      Source:
+        Type: CODEPIPELINE
+      TimeoutInMinutes: 60
+      # EncryptionKey:
+      #   Fn::Sub: arn:aws:kms:${AWS::Region}::${AWS::AccountId}:alias/aws/s3
+      Tags:
+        - Key: Name
+          Value: !Sub ${FunctionName}-lambda-build
+
+  CodePipelineRole:
+    Type: AWS::IAM::Role
+    Properties:
+      RoleName: !Sub ${FunctionName}-lambda-codepipeline
+      AssumeRolePolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+          -
+            Effect: Allow
+            Principal:
+              Service: 
+                - codepipeline.amazonaws.com
+            Action:
+              - sts:AssumeRole
+      Path: /
+      Policies:
+        -
+          PolicyName: CodePipelinePolicy
+          PolicyDocument:
+            Version: '2012-10-17'
+            Statement:
+              -
+                Effect: Allow
+                Action:
+                  - s3:DeleteObject
+                  - s3:GetObject
+                  - s3:GetObjectVersion
+                  - s3:ListBucket
+                  - s3:PutObject
+                  - s3:GetBucketPolicy
+                Resource:
+                  - Fn::Sub: arn:aws:s3:::${AWS::AccountId}-${PipelineArtifactStoreS3Location}*
+              -
+                Effect: Allow
+                Action:
+                  - codecommit:ListBranches
+                  - codecommit:ListRepositories
+                  - codecommit:BatchGetRepositories
+                  - codecommit:Get*
+                  - codecommit:GitPull
+                  - codecommit:UploadArchive
+                Resource:
+                  - Fn::Sub: arn:aws:codecommit:${AWS::Region}:${AWS::AccountId}:${FunctionName}-lambda
+              -
+                Effect: Allow
+                Action:
+                  - cloudformation:*
+                Resource:
+                  - Fn::Sub: arn:aws:cloudformation:${AWS::Region}:${AWS::AccountId}:/stack:${FunctionName}*
+                  - Fn::Sub: arn:aws:cloudformation:${AWS::Region}:${AWS::AccountId}:/stackset:${FunctionName}*
+              -
+                Effect: Allow
+                Action:
+                  - codebuild:StartBuild
+                  - codebuild:BatchGetBuilds
+                Resource:
+                  - Fn::Sub: arn:aws:codebuild:${AWS::Region}:${AWS::AccountId}:project/${FunctionName}-lambda-build
+                  - Fn::Sub: arn:aws:codebuild:${AWS::Region}:${AWS::AccountId}:build/${FunctionName}-lambda-build:*
+              # -
+              #   Effect: Allow
+              #   Action:
+              #     - iam:PassRole
+              #   Resource:
+              #     - Fn::Sub: arn:aws:iam:${AWS::AccountId}:/role:${FunctionName}-lambda-codepipeline-role
+
+  CodeBuildRole:
+    Type: AWS::IAM::Role
+    Properties:
+      RoleName: !Sub ${FunctionName}-lambda-codebulid
+      AssumeRolePolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+          -
+            Effect: Allow
+            Principal:
+              Service: 
+                - codebuild.amazonaws.com
+            Action:
+              - sts:AssumeRole
+      Path: /service-role/
+      Policies:
+        -
+          PolicyName: CodeBuildPolicy
+          PolicyDocument:
+            Version: '2012-10-17'
+            Statement:
+              -
+                Effect: Allow
+                Action:
+                  - logs:CreateLogGroup
+                  - logs:CreateLogStream
+                  - logs:PutLogEvents
+                Resource:
+                  - Fn::Sub: arn:aws:logs:${AWS::Region}:${AWS::AccountId}:log-group:/aws/codebuild/${FunctionName}*
+              -
+                Effect: Allow
+                Action:
+                  - s3:GetObject
+                  - s3:GetObjectVersion
+                  - s3:ListBucket
+                  - s3:PutObject
+                Resource:
+                  - Fn::Sub: arn:aws:s3:::${AWS::AccountId}-${PipelineArtifactStoreS3Location}*
+                  - Fn::Sub: arn:aws:s3:::${AWS::AccountId}-${BuildArtifactsStoreS3Location}*
+              -
+                Effect: Allow
+                Action:
+                  - cloudformation:*
+                Resource:
+                  - Fn::Sub: arn:aws:cloudformation:${AWS::Region}:${AWS::AccountId}:stack/${FunctionName}*
+                  - Fn::Sub: arn:aws:cloudformation:${AWS::Region}:${AWS::AccountId}:stackset/${FunctionName}*

@@ -1,0 +1,42 @@
+version: 0.2
+
+phases:
+  install:
+    commands:
+      - echo "Starting build at `date` in `pwd`"
+      - lsb_release -a
+      - aws --v
+      - echo ".NET Core `dotnet --version`"
+      - ls -l
+  pre_build:
+    commands:
+      - echo "Running tests at `date` in `pwd`"
+      - dotnet test ./test
+  build:
+    commands:
+      - echo "Starting packaging at `date` in `pwd`"
+      - cd src
+      - dotnet lambda package -o ../package.zip
+      - cd ..
+  post_build:
+    commands:
+      - echo "Starting deployment at `date` in `pwd`"
+      - ls -l
+      - functionName="hello"
+      - echo "Function name $functionName"
+      - s3Key=$functionName/$(md5sum package.zip | awk '{print $1}')
+      - echo "S3Key $s3Key"
+      
+      - # If you need multi-region deployment of the Lambda function, add copy commands for each region in which the 
+      - # package should be copied for deployment.
+      - aws s3 cp package.zip s3://<accountId>-codebuild-artifacts/$s3Key
+
+      - # The create-stack-set and create-stack-instances commands below must be run once and then the update command
+      - # can be used to deploy new versions of the function.
+      - aws cloudformation create-stack-set --stack-set-name $functionName-lambda-stack-set --template-body file://template.yml --capabilities CAPABILITY_NAMED_IAM --parameters ParameterKey=FunctionName,ParameterValue=$functionName ParameterKey=S3Key,ParameterValue=$s3Key
+      - aws cloudformation create-stack-instances --stack-set-name $functionName-lambda-stack-set --regions "us-west-1" "eu-central-1" --accounts <accountId>
+      - # aws cloudformation delete-stack-instances --stack-set-name $functionName-lambda-stack-set --regions "us-west-1" "eu-central-1" --accounts <accountId> --no-retain-stacks
+      - # aws cloudformation delete-stack-set --stack-set-name $functionName-lambda-stack-set
+
+      - # aws cloudformation update-stack-set --stack-set-name $functionName-lambda-stack-set --template-body file://template.yml --capabilities CAPABILITY_NAMED_IAM --parameters ParameterKey=FunctionName,ParameterValue=$functionName ParameterKey=S3Key,ParameterValue=$s3Key
+      - echo "Build completed at `date`"

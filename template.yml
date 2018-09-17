@@ -1,0 +1,46 @@
+# NOTE: This template does not use the AWS Serverless Application Model (SAM) because, at the time of writing, 
+# Serverless transforms did not support all Lambda properties and CloudFormation Stack Sets did not support
+# Serverless transforms. 
+
+AWSTemplateFormatVersion: '2010-09-09'
+Description: AWS CloudFormation to provision a Lambda function and supporting services
+
+Parameters:
+  FunctionName:
+    Type: String
+    Description: The name for the function
+  S3Key:
+    Type: String
+    Description: The location and name of the .zip file that contains the function source code.
+
+Resources:
+  Function:
+    Type: AWS::Lambda::Function
+    Properties:
+      FunctionName: !Ref FunctionName
+      Description: A simple function that takes a string and does a ToUpper
+      Handler: InTheClouds.Lambda.Hello::InTheClouds.Lambda.Hello.Function::FunctionHandler
+      Runtime: dotnetcore2.1
+      Role: !GetAtt FunctionExecutionRole.Arn
+      Timeout: 30
+      MemorySize: 128
+      Code:
+        S3Bucket: !Sub ${AWS::AccountId}-codebuild-artifacts
+        S3Key: !Ref S3Key
+
+  FunctionExecutionRole:
+    Type: AWS::IAM::Role
+    Properties:
+      RoleName: !Sub ${FunctionName}-execution-role
+      AssumeRolePolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+        - Effects: Allow
+          Principal:
+            Service:
+            - lambda.amazonaws.com
+          Action:
+          - sts:AssumeRole
+      Path: "/"
+      ManagedPolicyArns:
+        - 'arn:aws:iam::aws:policy/service-role/AWSLambdaBasicExecutionRole'
